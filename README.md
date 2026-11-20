@@ -1,79 +1,198 @@
 # @brello/sdk
 
-Wrap an existing OpenAI or Anthropic TypeScript client to send usage metadata to Brello. The SDK forwards the original provider results, errors, and streams.
+Brello SDK for TypeScript / Node.js.
 
-## Set up
+> [!WARNING]
+> **Brello is in beta.** The SDK and its API may change at any time without notice, and backward compatibility is not guaranteed between versions. Features may be added, changed, or removed. Pin an exact version in production and check the changelog before upgrading.
 
-Install the Brello package from your distribution source and use your existing provider SDK. Set these server-side environment variables:
+Wrap your OpenAI or Anthropic client once, and Brello tracks your AI API spend by model, feature, and end user. Your provider calls don't change.
 
-~~~sh
+- **One-line setup.** Wrap your existing client. Methods and return types stay the same.
+- **Metadata only.** Brello never reads prompts, output text, tool arguments or results, or embedding vectors.
+- **Not a proxy.** Requests go straight from your server to OpenAI or Anthropic. If Brello is down, your provider calls keep working.
+- **Open source.** Read exactly what gets collected.
+
+📖 Docs: https://brello.app/sdk/typescript/quickstart
+
+---
+
+## Requirements
+
+- Node.js 18 or newer (server-side)
+- A Brello project ingestion key
+- `openai` or `@anthropic-ai/sdk` in your project
+
+## Install
+
+```bash
+npm install @brello/sdk --save-exact
+```
+
+During the beta, we recommend pinning an exact version (`--save-exact`) so updates don't break your build unexpectedly.
+
+Keep your existing `openai` or `@anthropic-ai/sdk` dependency. Brello wraps it rather than replacing it.
+
+## Quickstart
+
+### 1. Set your project key
+
+```bash
 export BRELLO_API_KEY="YOUR_BRELLO_PROJECT_KEY"
-~~~
+```
 
-The SDK sends events to `https://api.brello.app/v1` by default. For a self-hosted Brello deployment, set `BRELLO_API_BASE_URL` or `options.apiBaseUrl` to your deployment's API URL. Loopback HTTP is supported for local development.
+Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` separately, as you already do.
 
-~~~ts
-import { Brello } from '@brello/sdk';
-import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
+### 2. Wrap your client
+
+Create **one** `Brello` instance per application runtime so all calls share a buffer.
+
+**OpenAI**
+
+```ts
+import { Brello } from "@brello/sdk";
+import OpenAI from "openai";
 
 const brello = new Brello();
-const openai = brello.wrap(new OpenAI());
-const claude = brello.wrap(new Anthropic());
-~~~
+export const openai = brello.wrap(new OpenAI());
 
-The Brello key authenticates ingestion. Your provider clients keep their existing API keys. Use a Brello test key when trying the integration in staging.
+const response = await openai.responses.create({
+  model: process.env.OPENAI_MODEL!,
+  input: "Summarize what this application does.",
+});
 
-## Supported calls
+console.log(response.output_text);
+```
 
-| Provider | Methods |
-| --- | --- |
-| OpenAI | responses.create, responses.stream, chat.completions.create, chat.completions.stream, embeddings.create |
-| Anthropic | messages.create, messages.stream |
+**Anthropic**
 
-Calls with tool definitions are supported through these methods. The SDK reads fields such as model, token counts, and request ID. It never reads prompts, output text, tool arguments or results, or embedding vectors. The server estimates cost from observed usage. If the provider omits final counts or reports cache-write categories Brello cannot represent, the event records usage as unknown.
+```ts
+import { Brello } from "@brello/sdk";
+import Anthropic from "@anthropic-ai/sdk";
 
-The SDK preserves the provider's request options. To receive token counts from OpenAI Chat Completions streams, set stream_options.include_usage in your request. When using the raw asResponse helper, the SDK leaves the response body unread and records usage as unknown. Stream tracking covers provider stream helpers and their async iterators. Custom conversions such as tee() or toReadableStream() may bypass observation on raw streams.
+const brello = new Brello();
+export const anthropic = brello.wrap(new Anthropic());
 
-## Add context
+const message = await anthropic.messages.create({
+  model: process.env.ANTHROPIC_MODEL!,
+  max_tokens: 256,
+  messages: [{ role: "user", content: "Summarize the release notes." }],
+});
+```
 
-~~~ts
-await brello.withContext(
-  { endUser: { id: 'user_123' }, feature: 'summary', attributes: { plan: 'pro' } },
-  () => openai.responses.create({ model: 'gpt-4o-mini', input: 'Summarize this text' }),
+### 3. Verify
+
+Complete a provider call, or finish consuming its stream. Then open your project's **Settings** in Brello and look for **Connected** under SDK activity.
+
+In a short-lived test script, call `await brello.flush()` before it exits.
+
+## Attribute usage to users and features
+
+See cost per end user and per feature, and catch abusive users by their spend pattern.
+
+```ts
+const response = await brello.withContext(
+  {
+    endUser: { id: "user_123" },
+    feature: "summarize",
+    attributes: { plan: "pro" },
+  },
+  () =>
+    openai.responses.create({
+      model: process.env.OPENAI_MODEL!,
+      input: "Summarize the release notes.",
+    }),
 );
-~~~
+```
 
-Use withContext around one call or a block of async calls. Pass defaults as the second argument to wrap. End-user identifiers and attributes are sent when the Brello project enables their collection. Set either field to false in the context to omit it. To send a project-scoped HMAC instead of a plain user ID, set options.hashEndUserId to true. The SDK omits the user until `GET /v1/config` supplies the project's hashing settings.
+- `withContext()` covers a single call or a block of async calls.
+- Pass defaults with `brello.wrap(client, defaults)`.
+- Set `endUser: false` or `attributes: false` to omit those fields.
+- User and attribute fields are sent only when your project settings enable them. Use `options.hashEndUserId` to send a project-scoped HMAC instead of the raw ID.
 
-| Option | Environment variable | Behavior |
-| --- | --- | --- |
-| apiKey | BRELLO_API_KEY | Project ingestion key |
-| options.apiBaseUrl | BRELLO_API_BASE_URL | Optional self-hosted API URL. Defaults to `https://api.brello.app/v1` |
-| options.environment | BRELLO_ENV | prod or live for a live key, staging or test for a test key |
-| options.serviceName | BRELLO_SERVICE_NAME | Adds the serviceName event attribute when attributes are enabled |
-| options.enabled | BRELLO_ENABLED | Set to false or 0 to disable event delivery |
-| options.debug | BRELLO_DEBUG | Set to true or 1 to inspect event metadata and delivery outcomes |
+## Supported methods
 
-Explicit options take precedence. The SDK masks user identifiers and custom attributes in its debug output. Set `options.debugIncludeContext: true` with debug enabled to see the event context that will be sent. Use this only with local test data.
+| Provider                | Methods                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| OpenAI Responses        | `responses.create()` (incl. `stream: true`), `responses.stream()`               |
+| OpenAI Chat Completions | `chat.completions.create()` (incl. `stream: true`), `chat.completions.stream()` |
+| OpenAI Embeddings       | `embeddings.create()`                                                           |
+| Anthropic Messages      | `messages.create()` (incl. `stream: true`), `messages.stream()`                 |
 
-## Delivery and shutdown
+### Streaming notes
 
-The SDK batches events after 20 entries or approximately 2 seconds and buffers up to 500 entries or 2 MiB of serialized events, including the batch in flight. It evicts older pending events when the buffer fills and expires events after 60 seconds. Retries reuse event IDs and honor `Retry-After`. After three consecutive ingestion failures from network errors, timeouts, or HTTP 5xx responses, delivery pauses for 30 seconds. The next batch tests recovery. If that request fails, the pause increases with jitter up to five minutes. Provider calls continue during the pause.
+- **OpenAI Chat Completions:** add `stream_options: { include_usage: true }` to receive final usage.
+- Consume the original SDK iterator or its stream helpers. On raw streams, `tee()` and `toReadableStream()` may bypass Brello.
+- If a stream ends before final counts arrive, the event is recorded with `usage: null`.
+- Anthropic cache reads and cache creation are included in total input tokens.
 
-Call `await brello.flush()` during graceful shutdown or before a short-lived Node.js process exits. The default wait is five seconds. A flush can return earlier when delivery is paused beyond its deadline. On Cloudflare Workers with Node.js compatibility enabled, pass secret bindings through explicit options and register `ctx.waitUntil(brello.flush())` after the provider call or stream completes. On other serverless hosts, use the host's background-task hook or await the flush before returning.
+## Configuration
 
-In project settings, Connected reflects events saved by the Brello worker.
+Pass options to `new Brello({ apiKey, options })`. Explicit options override environment variables.
 
-## Development
+| Option                        | Environment variable  | Description                                                                      |
+| ----------------------------- | --------------------- | -------------------------------------------------------------------------------- |
+| `apiKey`                      | `BRELLO_API_KEY`      | Project ingestion key                                                            |
+| `options.apiBaseUrl`          | `BRELLO_API_BASE_URL` | Self-hosted API URL. Default: `https://api.brello.app/v1`                        |
+| `options.environment`         | `BRELLO_ENV`          | Key check. `prod`/`live` expects a live key, `staging`/`test` expects a test key |
+| `options.serviceName`         | `BRELLO_SERVICE_NAME` | Adds a `serviceName` attribute                                                   |
+| `options.enabled`             | `BRELLO_ENABLED`      | Set `false` / `0` to disable delivery                                            |
+| `options.debug`               | `BRELLO_DEBUG`        | Set `true` / `1` to log event metadata and delivery outcomes                     |
+| `options.hashEndUserId`       |                       | Send a project-scoped HMAC instead of the raw user ID                            |
+| `options.debugIncludeContext` |                       | Include real user/attribute fields in debug logs. Local test data only           |
 
-In a source checkout, see [CONTRIBUTING.md](CONTRIBUTING.md) for the source layout and event flow.
+If the environment check fails, delivery is disabled but your provider client keeps serving requests.
 
-Run `pnpm typecheck`, `pnpm lint`, `pnpm test`, and `pnpm build` from this directory. The package targets Node.js 18 or newer. The build emits ESM and CommonJS with TypeScript declarations. Provider client packages are installed by the application.
+### Self-hosted Brello
 
-In a source checkout, see [Releasing to npm](CONTRIBUTING.md#releasing-to-npm) for the GitHub Actions release process.
+```bash
+export BRELLO_API_BASE_URL="https://brello-api.example.com/v1"
+```
 
-## Contact
+Include the `/v1` prefix and use HTTPS. For local development, `http://localhost:8000/v1` works.
 
-- [Brello](mailto:hello@brello.app)
-- [Dan](mailto:gyeon@brello.app)
+## Delivery and flushing
+
+Events are batched and sent in the background, so the SDK never blocks your provider calls.
+
+- A batch is sent after 20 events or about 2 seconds.
+- The buffer holds up to 500 events or 2 MiB. Events expire after 60 seconds.
+- Failed deliveries are retried with the same event ID, and back off on repeated errors. Provider calls continue during pauses.
+
+Flush on shutdown or before a short-lived script exits:
+
+```ts
+await brello.flush(); // waits up to 5s
+await brello.flush(10_000); // custom timeout
+```
+
+### Cloudflare Workers
+
+Enable Node.js compatibility and pass the secret binding as `apiKey`:
+
+```ts
+const brello = new Brello({ apiKey: env.BRELLO_API_KEY });
+
+// After your provider call or stream completes:
+ctx.waitUntil(brello.flush());
+```
+
+On other serverless platforms, use the runtime's background-task hook, or await the flush before the invocation ends.
+
+## Troubleshooting
+
+**Status stays "Pending"**
+
+1. Check that `BRELLO_API_KEY` is the correct project key.
+2. Run with `BRELLO_DEBUG=1` to inspect delivery. User IDs and attributes are masked in debug output by default.
+3. In scripts or serverless functions, make sure `brello.flush()` runs before the process exits.
+
+## Links
+
+- Website: https://brello.app
+- Docs: https://brello.app/sdk/typescript/quickstart
+- Discord support: <!-- TODO -->
+- Issues: https://github.com/brello-app/<!-- TODO: repo -->/issues
+
+## License
+
+<!-- TODO -->
