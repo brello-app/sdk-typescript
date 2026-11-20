@@ -1,0 +1,82 @@
+name: TypeScript SDK CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      package-release:
+        description: Build and upload the npm release tarball
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, test, and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.18.0
+
+      - uses: actions/setup-node@v7
+        if: ${{ !inputs.package-release }}
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - uses: actions/setup-node@v7
+        if: inputs.package-release
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - run: node scripts/prepare-release.mjs
+        if: inputs.package-release
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+        if: ${{ !inputs.package-release }}
+
+      - name: Pack the release
+        if: inputs.package-release
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-release"
+          pnpm pack --pack-destination "$RUNNER_TEMP/npm-release"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 18
+          package-manager-cache: false
+
+      - run: node scripts/smoke-dist.mjs
+        if: ${{ !inputs.package-release }}
+
+      - name: Verify the packed SDK on Node.js 18
+        if: inputs.package-release
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-smoke"
+          tar -xzf "$RUNNER_TEMP"/npm-release/*.tgz -C "$RUNNER_TEMP/npm-smoke"
+          package_dir="$RUNNER_TEMP/npm-smoke/package"
+          test -f "$package_dir/dist/index.d.ts"
+          test -f "$package_dir/dist/index.d.cts"
+          mkdir -p "$package_dir/scripts"
+          cp scripts/smoke-dist.mjs "$package_dir/scripts/"
+          node "$package_dir/scripts/smoke-dist.mjs"
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.package-release
+        with:
+          name: npm-release
+          path: ${{ runner.temp }}/npm-release/*.tgz
+          if-no-files-found: error
