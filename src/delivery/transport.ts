@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import manifest from '../../package.json' with { type: 'json' };
 import type { TelemetryEvent } from '../telemetry/event.js';
 import { object } from '../telemetry/metadata.js';
 import { cancelBody, readJson } from './http-response.js';
@@ -257,7 +258,7 @@ export class Transport {
     const events = active.map(({ event }) => this.applyCollection(event));
     const body = JSON.stringify({
       schemaVersion: '1',
-      sdk: { name: '@brello/sdk', version: '0.0.1', runtime: 'javascript' },
+      sdk: { name: '@brello/sdk', version: manifest.version, runtime: 'javascript' },
       events,
     });
     if (encoder.encode(body).length > MAX_BATCH_BYTES) return this.split(active);

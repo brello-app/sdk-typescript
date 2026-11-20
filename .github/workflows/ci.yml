@@ -19,20 +19,20 @@ jobs:
     name: Lint, test, and build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 12.18.0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: ${{ !inputs.package-release }}
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: inputs.package-release
         with:
           node-version: 22
@@ -54,7 +54,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/npm-release"
           pnpm pack --pack-destination "$RUNNER_TEMP/npm-release"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 18
           package-manager-cache: false
@@ -74,7 +74,7 @@ jobs:
           cp scripts/smoke-dist.mjs "$package_dir/scripts/"
           node "$package_dir/scripts/smoke-dist.mjs"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: inputs.package-release
         with:
           name: npm-release

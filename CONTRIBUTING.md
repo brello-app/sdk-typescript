@@ -53,19 +53,14 @@ Use this directory as the root of the TypeScript SDK repository. The workflow in
 
 ### Set up npm Trusted Publishing
 
-1. Make sure `@brello/sdk` exists and you can manage it on npm. For a new package, publish its first version with an npm maintainer account that can publish to the `@brello` scope. Use another version for the first automated release.
-2. In the npm package settings, configure a GitHub Actions Trusted Publisher. Enter the owner and name of the TypeScript SDK repository, workflow filename `publish.yml`, and GitHub environment `npm`. Enable direct `npm publish` for this configuration.
+1. Make sure `@brello/sdk` exists and you can manage it on npm. If you need to register a new package, an npm maintainer with access to the `@brello` scope can use `npm stage publish` with a tarball built by `pnpm pack`. Run the npm command outside the SDK checkout and use npm 11.15.0 or later.
+2. In the GitHub repository settings, open **Environments → npm → Deployment branches and tags**. Select **Selected branches and tags**, remove the `main` branch rule, and add a **Tag** rule with the pattern `v*`. GitHub Release workflows run on the release tag.
+3. In the npm package settings, configure a GitHub Actions Trusted Publisher for `brello-app/sdk-typescript`, workflow `publish.yml`, and environment `npm`. Allow `npm stage publish` and disable **Allow npm publish** for this publisher.
 
-For a first release under the `beta` tag, run `pnpm login --registry=https://registry.npmjs.org` if needed, then run the following from the SDK repository root. Remove `--dry-run` to publish.
-
-~~~sh
-pnpm publish --access public --tag beta --dry-run --registry=https://registry.npmjs.org
-~~~
-
-The workflow also publishes through pnpm, using OIDC without an npm token. The packed manifest gets its repository URL from GitHub Actions.
+The workflow stages through npm using OIDC. The packed manifest gets its repository URL from GitHub Actions.
 
 ### Publish a release
 
-Update the version in `package.json` and publish a GitHub Release with the matching tag, such as `v0.0.2`. Mark it as a GitHub pre-release or use a prerelease version such as `0.0.2-beta.1` to publish to the npm `beta` channel. Other releases publish to `latest`.
+Update the version in `package.json` and publish a GitHub Release with the matching tag, such as `v0.0.2`. Mark it as a GitHub pre-release or use a prerelease version such as `0.0.2-beta.1` to select the npm `beta` tag. Other releases use `latest`.
 
-The workflow runs the SDK checks and builds the tarball. It checks the packed ESM and CommonJS entry points on Node.js 18 before publishing that same tarball.
+The workflow runs the SDK checks, verifies the packed ESM and CommonJS entry points on Node.js 18, and stages the verified tarball. Review the staged version and its dist-tag on npmjs.com, then approve it with 2FA to publish it.
