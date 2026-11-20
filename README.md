@@ -8,7 +8,7 @@ Brello SDK for TypeScript / Node.js.
 Wrap your OpenAI or Anthropic client once, and Brello tracks your AI API spend by model, feature, and end user. Your provider calls don't change.
 
 - **One-line setup.** Wrap your existing client. Methods and return types stay the same.
-- **Metadata only.** Brello never reads prompts, output text, tool arguments or results, or embedding vectors.
+- **Metadata only.** The SDK extracts usage metadata from supported calls without collecting prompts, output text, tool arguments or results, or embedding vectors.
 - **Not a proxy.** Requests go straight from your server to OpenAI or Anthropic. If Brello is down, your provider calls keep working.
 - **Open source.** Read exactly what gets collected.
 
@@ -109,6 +109,21 @@ const response = await brello.withContext(
 - Set `endUser: false` or `attributes: false` to omit those fields.
 - User and attribute fields are sent only when your project settings enable them. Use `options.hashEndUserId` to send a project-scoped HMAC instead of the raw ID.
 
+## What gets sent
+
+| Data | Fields |
+| --- | --- |
+| Batch | `schemaVersion`, `sdk.name`, `sdk.version`, `sdk.runtime`, and `events` |
+| Request | `id`, `type`, `occurredAt`, `durationMs`, `provider`, `model`, `status`, and optional `providerRequestId` |
+| Usage | `usage` is `null` when counts are unavailable. Otherwise it includes `inputTokens` and `outputTokens`, plus `cacheReadInputTokens` and `cacheCreationInputTokens.fiveMinutes` or `.oneHour` when available. |
+| Billing and errors | Optional `billing.serviceTier`, `error.code`, and `error.httpStatus` |
+| Application context | Optional `feature`, `attributes` (including `serviceName` if configured), and `endUser`. `endUser` contains `id` and/or `name`, or `idHash`, `algorithm`, and `keyVersion` in hash mode. |
+
+The SDK uses the Brello project ingestion key in the `Authorization` header. It does not collect provider API keys, request or response bodies, or full error objects. `attributes` and `endUser` are gated by the cached project settings. Hash mode omits `endUser` until the SDK has a usable HMAC configuration and an ID to hash.
+
+> [!WARNING]
+> Keep API keys, secrets, prompts, model outputs, tool inputs or results, and other sensitive data out of `feature`, `attributes`, `serviceName`, and `endUser`. Use opaque internal IDs for users. The SDK can send values you explicitly pass as metadata. Debug logs mask `endUser` and `attributes` by default. Keep `debugIncludeContext` off outside local testing.
+
 ## Supported methods
 
 | Provider                | Methods                                                                         |
@@ -190,9 +205,9 @@ On other serverless platforms, use the runtime's background-task hook, or await 
 
 - Website: https://brello.app
 - Docs: https://brello.app/sdk/typescript/quickstart
-- Discord support: <!-- TODO -->
-- Issues: https://github.com/brello-app/<!-- TODO: repo -->/issues
+- [Discord support](https://discord.gg/GRHPXw6GX5)
+- [GitHub Issues](https://github.com/brello-app/sdk-typescript/issues)
 
 ## License
 
-<!-- TODO -->
+Released under the [MIT License](LICENSE).
