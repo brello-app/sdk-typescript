@@ -39,6 +39,8 @@ function watchIterator(source: AsyncIterator<unknown>, observation: Observation)
 /** Observe parsed responses immediately and attach a lazy iterator to streamed responses. */
 export function watchResult(value: unknown, observation: Observation): unknown {
   if (value && typeof value === 'object' && Symbol.asyncIterator in value) {
+    if (observation.endpoint === 'google-generate' && 'next' in value && typeof value.next === 'function')
+      return watchIterator(value as AsyncIterator<unknown>, observation);
     return proxy(value, (key, method) => {
       if (typeof method !== 'function') return method;
       if (key === Symbol.asyncIterator) return () => {

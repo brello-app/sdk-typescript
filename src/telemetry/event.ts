@@ -1,4 +1,5 @@
-export type Provider = 'openai' | 'anthropic';
+export type GoogleProvider = 'google_ai_studio' | 'google_vertex_ai';
+export type Provider = 'openai' | 'anthropic' | GoogleProvider;
 export type Status = 'success' | 'error' | 'cancelled';
 
 /** Application metadata that can be supplied per wrapper or async context. */

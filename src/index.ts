@@ -6,6 +6,7 @@ export type {
   BrelloConfig,
   BrelloErrorInfo,
   BrelloOptions,
+  BrelloWrapOptions,
 } from './client.js';
 export type { BrelloContext } from './telemetry/event.js';
 

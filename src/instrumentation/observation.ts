@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { EventContext, Status, TelemetryEvent } from '../telemetry/event.js';
+import type { EventContext, Provider, Status, TelemetryEvent, TokenUsage } from '../telemetry/event.js';
 import { count, object, text } from '../telemetry/metadata.js';
+import { googleEmbeddingUsage, googleGenerationUsage, googleModelId, googleServiceTier } from './google-usage.js';
 import { readUsage, type Endpoint } from './provider-usage.js';
 
 export type RecordEvent = (event: TelemetryEvent) => void;
+export type ObservedEndpoint = Endpoint | 'google-generate' | 'google-embedding';
 
 /**
  * Accumulate metadata for one provider invocation. Promise handlers, stream
@@ -17,14 +19,18 @@ export class Observation {
   private done = false;
   private requestId?: string;
   private usage: unknown;
+  private googleUsage: TokenUsage | null = null;
   private serviceTier?: string;
 
   constructor(
-    readonly endpoint: Endpoint,
+    readonly endpoint: ObservedEndpoint,
+    private readonly provider: Provider,
     private model: string,
     private readonly context: EventContext,
     private readonly record: RecordEvent,
-  ) {}
+  ) {
+    if (endpoint === 'google-generate' || endpoint === 'google-embedding') this.model = googleModelId(model);
+  }
 
   headers(value: unknown): void {
     const response = object(value);
@@ -38,6 +44,15 @@ export class Observation {
   }
 
   private metadata(value: Record<string, unknown>): void {
+    if (this.endpoint === 'google-generate' || this.endpoint === 'google-embedding') {
+      const model = text(value.modelVersion, 256);
+      if (model) this.model = googleModelId(model);
+      this.responseId(value.responseId);
+      this.serviceTier = googleServiceTier(value.usageMetadata) ?? this.serviceTier;
+      if (this.endpoint === 'google-embedding') this.googleUsage = googleEmbeddingUsage(value);
+      else if (value.usageMetadata != null) this.googleUsage = googleGenerationUsage(value.usageMetadata);
+      return;
+    }
     this.model = text(value.model, 256) ?? this.model;
     this.requestId ??= text(value._request_id, 256);
     this.serviceTier = text(value.service_tier, 64) ?? this.serviceTier;
@@ -92,9 +107,9 @@ export class Observation {
   }
 
   completed(): void {
-    // Chat can finish without usage. Responses and Messages are expected to
-    // report a terminal event before their iterators finish normally.
-    this.finish(this.endpoint === 'chat' ? 'success' : 'error', undefined, this.endpoint === 'chat');
+    // OpenAI Responses and Anthropic Messages expect an explicit terminal event.
+    const completed = this.endpoint === 'chat' || this.endpoint === 'google-generate';
+    this.finish(completed ? 'success' : 'error', undefined, completed);
   }
 
   failed(reason: unknown): void {
@@ -115,16 +130,21 @@ export class Observation {
     const httpStatus = count(failure.status);
     const validStatus = httpStatus !== undefined && httpStatus >= 100 && httpStatus <= 599;
     const providerRequestId = this.requestId ?? text(failure.request_id, 256);
+    let usage: TokenUsage | null = null;
+    if (useUsage) {
+      usage = this.endpoint === 'google-generate' || this.endpoint === 'google-embedding'
+        ? this.googleUsage : readUsage(this.endpoint, this.usage);
+    }
     this.record({
       ...this.context,
       id: randomUUID(),
       type: 'llm.request',
-      provider: this.endpoint === 'messages' ? 'anthropic' : 'openai',
+      provider: this.provider,
       model: this.model,
       occurredAt: this.occurredAt,
       durationMs: Math.round(Math.max(0, performance.now() - this.start)),
       status,
-      usage: useUsage ? readUsage(this.endpoint, this.usage) : null,
+      usage,
       ...(providerRequestId ? { providerRequestId } : {}),
       ...(this.serviceTier ? { billing: { serviceTier: this.serviceTier } } : {}),
       ...(safeCode || validStatus ? { error: {

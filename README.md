@@ -5,11 +5,11 @@ Brello SDK for TypeScript / Node.js.
 > [!WARNING]
 > **Brello is in beta.** The SDK and its API may change at any time without notice, and backward compatibility is not guaranteed between versions. Features may be added, changed, or removed. Pin an exact version in production and check the changelog before upgrading.
 
-Wrap your OpenAI or Anthropic client once, and Brello tracks your AI API spend by model, feature, and end user. Your provider calls don't change.
+Wrap your OpenAI, Anthropic, or Google Gen AI client once to track AI API usage by model, feature, and end user. Your provider calls don't change.
 
 - **One-line setup.** Wrap your existing client. Methods and return types stay the same.
 - **Metadata only.** The SDK extracts usage metadata from supported calls without collecting prompts, output text, tool arguments or results, or embedding vectors.
-- **Not a proxy.** Requests go straight from your server to OpenAI or Anthropic. If Brello is down, your provider calls keep working.
+- **Direct provider requests.** Your server calls the provider directly. If Brello is down, your provider calls keep working.
 - **Open source.** Read exactly what gets collected.
 
 📖 Docs: https://brello.app/sdk/typescript/quickstart
@@ -20,7 +20,7 @@ Wrap your OpenAI or Anthropic client once, and Brello tracks your AI API spend b
 
 - Node.js 18 or newer (server-side)
 - A Brello project ingestion key
-- `openai` or `@anthropic-ai/sdk` in your project
+- The provider SDK in your project, such as `openai`, `@anthropic-ai/sdk`, or `@google/genai`. Follow that SDK's Node.js requirements as well.
 
 ## Install
 
@@ -30,7 +30,7 @@ npm install @brello/sdk --save-exact
 
 During the beta, we recommend pinning an exact version (`--save-exact`) so updates don't break your build unexpectedly.
 
-Keep your existing `openai` or `@anthropic-ai/sdk` dependency. Brello wraps it rather than replacing it.
+Keep your existing provider SDK dependency. Brello wraps your client.
 
 ## Quickstart
 
@@ -40,7 +40,7 @@ Keep your existing `openai` or `@anthropic-ai/sdk` dependency. Brello wraps it r
 export BRELLO_API_KEY="YOUR_BRELLO_PROJECT_KEY"
 ```
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` separately, as you already do.
+Configure the credentials for your provider separately.
 
 ### 2. Wrap your client
 
@@ -78,6 +78,25 @@ const message = await anthropic.messages.create({
   messages: [{ role: "user", content: "Summarize the release notes." }],
 });
 ```
+
+**Google AI Studio (Gemini Developer API) and Vertex AI**
+
+```ts
+import { Brello } from "@brello/sdk";
+import { GoogleGenAI } from "@google/genai";
+
+const brello = new Brello();
+const studio = brello.wrap(new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }), {
+  provider: "google_ai_studio",
+});
+const vertex = brello.wrap(new GoogleGenAI({
+  vertexai: true,
+  project: process.env.GOOGLE_CLOUD_PROJECT,
+  location: process.env.GOOGLE_CLOUD_LOCATION,
+}), { provider: "google_vertex_ai" });
+```
+
+Pass the provider when wrapping the client. Use your existing Google credentials, such as Application Default Credentials for Vertex AI. Brello collects SDK usage for these providers. Automatic billing imports are not yet available.
 
 ### 3. Verify
 
@@ -133,6 +152,7 @@ The SDK uses the Brello project ingestion key in the `Authorization` header. It 
 | OpenAI Chat Completions | `chat.completions.create()` (incl. `stream: true`), `chat.completions.stream()` |
 | OpenAI Embeddings       | `embeddings.create()`                                                           |
 | Anthropic Messages      | `messages.create()` (incl. `stream: true`), `messages.stream()`                 |
+| Google AI Studio and Vertex AI | `models.generateContent()`, `models.generateContentStream()`, `models.embedContent()` |
 
 ### Streaming notes
 
@@ -140,6 +160,7 @@ The SDK uses the Brello project ingestion key in the `Authorization` header. It 
 - Consume the original SDK iterator or its stream helpers. On raw streams, `tee()` and `toReadableStream()` may bypass Brello.
 - If a stream ends before final counts arrive, the event is recorded with `usage: null`.
 - Anthropic cache reads and cache creation are included in total input tokens.
+- Google usage is recorded per wrapped method call. The Google client may make additional requests internally, for example for automatic continuation. For streams, consume the original async iterator to completion to capture the final usage. Embedding usage is unknown when Google returns no usable token counts.
 
 ## Configuration
 

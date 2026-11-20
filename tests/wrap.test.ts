@@ -221,5 +221,137 @@ describe('Brello wrapping', () => {
     assert.deepEqual(delivered[0][0].error, { code: 'unavailable', httpStatus: 503 });
     assert.equal(JSON.stringify(delivered).includes('private provider error text'), false);
   });
+
+  it('distinguishes both Google backends and sends only generation metadata', async () => {
+    const { brello, delivered } = setup();
+    let contentReads = 0;
+    const response = {
+      responseId: 'google-response',
+      modelVersion: 'models/gemini-example',
+      usageMetadata: {
+        promptTokenCount: 20, cachedContentTokenCount: 7, toolUsePromptTokenCount: 3,
+        candidatesTokenCount: 4, thoughtsTokenCount: 2, totalTokenCount: 29,
+      },
+      get candidates() { contentReads++; return ['private output']; },
+    };
+    class Models {
+      #response = response;
+      async generateContent(params: { model: string; contents?: string }) {
+        assert.equal(params.model, 'gemini-example');
+        return this.#response;
+      }
+      async countTokens() { return 50; }
+    }
+    const original = { models: new Models() };
+    const studio = brello.wrap(original, { provider: 'google_ai_studio' });
+    const vertex = brello.wrap(original, { provider: 'google_vertex_ai' });
+    const unconfigured = brello.wrap(original);
+    assert.equal(studio.models instanceof Models, true);
+    assert.equal(await studio.models.countTokens(), 50);
+    assert.equal(await unconfigured.models.generateContent({ model: 'gemini-example' }), response);
+    assert.equal(await brello.withContext({ feature: 'summary' }, () =>
+      studio.models.generateContent({
+        model: 'gemini-example',
+        get contents() { contentReads++; return 'private prompt'; },
+      })), response);
+    await vertex.models.generateContent({ model: 'gemini-example' });
+    await brello.flush();
+
+    const events = delivered.flat();
+    assert.deepEqual(events.map((event) => event.provider), ['google_ai_studio', 'google_vertex_ai']);
+    assert.equal(events[0].feature, 'summary');
+    assert.equal(events[0].model, 'gemini-example');
+    assert.equal(events[0].providerRequestId, 'google-response');
+    assert.deepEqual(events[0].usage, { inputTokens: 23, outputTokens: 6, cacheReadInputTokens: 7 });
+    assert.equal(contentReads, 0);
+    assert.doesNotMatch(JSON.stringify(events), /private (prompt|output)/);
+  });
+
+  it('records Google streams once, after the application consumes or closes them', async () => {
+    const { brello, delivered } = setup();
+    const failure = Object.assign(new Error('private stream error'), { status: 503 });
+    let advances = 0;
+    let closures = 0;
+    const vertex = brello.wrap({
+      models: {
+        async generateContentStream(params: { model: string; fail?: boolean; omitUsage?: boolean }) {
+          return (async function* () {
+            try {
+              advances++;
+              yield { responseId: 'stream-id', usageMetadata: params.omitUsage ? undefined : {
+                promptTokenCount: 8, candidatesTokenCount: 2, totalTokenCount: 10,
+              } };
+              if (params.fail) throw failure;
+              yield { usageMetadata: params.omitUsage ? undefined : {
+                promptTokenCount: 8, candidatesTokenCount: 5, totalTokenCount: 13,
+                trafficType: 'PROVISIONED_THROUGHPUT',
+              } };
+              yield {};
+            } finally {
+              closures++;
+            }
+          })();
+        },
+      },
+    }, { provider: 'google_vertex_ai' });
+    const model = 'projects/example/locations/global/publishers/google/models/gemini-example';
+    const stream = await vertex.models.generateContentStream({ model });
+    assert.equal(advances, 0);
+    await stream.next();
+    for await (const chunk of stream) assert.ok(chunk);
+    assert.equal((await stream.next()).done, true);
+    for await (const chunk of await vertex.models.generateContentStream({ model })) {
+      assert.ok(chunk);
+      break;
+    }
+    const broken = await vertex.models.generateContentStream({ model, fail: true });
+    await broken.next();
+    await assert.rejects(broken.next(), (error: unknown) => error === failure);
+    const missing = await vertex.models.generateContentStream({ model, omitUsage: true });
+    for await (const chunk of missing) assert.ok(chunk);
+    assert.equal(closures, 4);
+    await brello.flush();
+
+    const events = delivered.flat();
+    assert.deepEqual(events.map((event) => event.status), ['success', 'cancelled', 'error', 'success']);
+    assert.equal(events[0].model, 'gemini-example');
+    assert.equal(events[0].providerRequestId, 'stream-id');
+    assert.deepEqual(events[0].usage, { inputTokens: 8, outputTokens: 5 });
+    assert.deepEqual(events[0].billing, { serviceTier: 'provisioned_throughput' });
+    assert.equal(events[1].usage, null);
+    assert.deepEqual(events[2].error, { httpStatus: 503 });
+    assert.equal(events[3].usage, null);
+    assert.doesNotMatch(JSON.stringify(events), /private stream error/);
+  });
+
+  it('uses reported Google embedding counts and preserves unknown usage', async () => {
+    const { brello, delivered } = setup();
+    let vectorReads = 0;
+    const embedding = {
+      statistics: { tokenCount: 9 },
+      get values() { vectorReads++; return [0.25]; },
+    };
+    const cases = [
+      { usageMetadata: { promptTokenCount: 6 }, embeddings: [embedding] },
+      { embeddings: [embedding, { statistics: { tokenCount: 4 } }] },
+      { embeddings: [embedding, {}] },
+    ];
+    const original = { models: { async embedContent(params: { model: string; index: number }) {
+      return cases[params.index];
+    } } };
+    const studio = brello.wrap(original, { provider: 'google_ai_studio' });
+    const vertex = brello.wrap(original, { provider: 'google_vertex_ai' });
+    const model = 'gemini-embedding-example';
+    assert.equal(await studio.models.embedContent({ model, index: 0 }), cases[0]);
+    assert.equal(await vertex.models.embedContent({ model, index: 1 }), cases[1]);
+    assert.equal(await vertex.models.embedContent({ model, index: 2 }), cases[2]);
+    await brello.flush();
+    assert.deepEqual(delivered.flat().map((event) => event.usage), [
+      { inputTokens: 6, outputTokens: 0 },
+      { inputTokens: 13, outputTokens: 0 },
+      null,
+    ]);
+    assert.equal(vectorReads, 0);
+  });
 });
 

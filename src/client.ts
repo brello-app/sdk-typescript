@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { parseApiKey, readNodeEnvironment, type BrelloKeyMode } from './auth/api-key.js';
 import { Transport } from './delivery/transport.js';
 import { wrapClient } from './instrumentation/wrap-client.js';
-import type { BrelloContext } from './telemetry/event.js';
+import type { BrelloContext, GoogleProvider } from './telemetry/event.js';
 import { safeContext, text } from './telemetry/metadata.js';
 
 const DEFAULT_API_BASE_URL = 'https://api.brello.app/v1';
@@ -29,6 +29,11 @@ export interface BrelloOptions extends Record<string, unknown> {
 export interface BrelloConfig {
   apiKey?: string;
   options?: BrelloOptions;
+}
+
+export interface BrelloWrapOptions extends BrelloContext {
+  /** Select the backend used by a Google Gen AI client. */
+  provider?: GoogleProvider;
 }
 
 export type BrelloApiKeyErrorCode = 'API_KEY_MISSING' | 'API_KEY_INVALID';
@@ -121,17 +126,18 @@ export class Brello {
    * Multiple clients wrapped by this instance share a delivery queue. Defaults are
    * shallowly overridden by context from the current async execution.
    */
-  wrap<T extends object>(client: T, defaults: BrelloContext = {}): T {
+  wrap<T extends object>(client: T, options: BrelloWrapOptions = {}): T {
     const transport = this.transport;
     if (!transport) return client;
+    const provider = options?.provider;
     const serviceName = text(this.options.serviceName ?? readNodeEnvironment('BRELLO_SERVICE_NAME'), 64);
     return wrapClient(client, () => {
-      const context = { ...defaults, ...this.context.getStore() };
+      const context = { ...options, ...this.context.getStore() };
       if (serviceName && context.attributes !== false) {
         context.attributes = { serviceName, ...context.attributes };
       }
       return safeContext(context);
-    }, (event) => transport.enqueue(event));
+    }, (event) => transport.enqueue(event), provider);
   }
 
   /**
