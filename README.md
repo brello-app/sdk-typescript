@@ -108,6 +108,7 @@ const response = await brello.withContext(
 - Pass defaults with `brello.wrap(client, defaults)`.
 - Set `endUser: false` or `attributes: false` to omit those fields.
 - User and attribute fields are sent only when your project settings enable them. Use `options.hashEndUserId` to send a project-scoped HMAC instead of the raw ID.
+- Changes to collection settings can take up to 60 seconds to reach a running SDK.
 
 ## What gets sent
 
@@ -167,7 +168,7 @@ Include the `/v1` prefix and use HTTPS. For local development, `http://localhost
 
 ## Delivery and flushing
 
-Events are batched and sent in the background, so the SDK never blocks your provider calls.
+Events are batched and sent in the background. Your provider calls never wait on a network request to Brello.
 
 - A batch is sent after 20 events or about 2 seconds.
 - The buffer holds up to 500 events or 2 MiB. Events expire after 60 seconds.
